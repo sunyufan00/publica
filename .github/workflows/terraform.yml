@@ -1,30 +1,40 @@
-name: 超轻量实时同步（永不爆盘）
+name: 仅同步新增文件（永不爆盘）
 on:
   workflow_dispatch:
   schedule:
-    - cron: '*/5 * * * *'  # 每5分钟自动同步一次！
+    - cron: '*/5 * * * *'
 
 jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - name: 仅同步最新文件（无历史，超小体积）
+      - name: 检出你的仓库（仅最新，无历史）
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: 拉取原库文件列表（只拉列表，不拉文件！）
         run: |
-          # 克隆你自己的仓库（只最新版）
-          git clone --depth=1 https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/sunyufan00/publica.git myrepo
-          cd myrepo
-          
-          # 直接覆盖下载原库最新文件
-          curl -L https://github.com/qwe213312/k25FCdfEOoEJ42S6/archive/refs/heads/main.zip -o upstream.zip
-          unzip -o upstream.zip -d temp
-          cp -rf temp/k25FCdfEOoEJ42S6-main/* .
-          rm -rf temp upstream.zip
-          
-          # 提交并推送
+          curl -s https://api.github.com/repos/qwe213312/k25FCdfEOoEJ42S6/git/trees/main?recursive=1 | jq -r '.tree[].path' > file_list.txt
+
+      - name: 只下载【你仓库没有的新文件】
+        run: |
+          mkdir -p new_files
+          while read -r filename; do
+            if [[ "$filename" == *.manifest ]]; then
+              if [[ ! -f "$filename" ]]; then
+                echo "新增文件：$filename"
+                wget -q "https://raw.githubusercontent.com/qwe213312/k25FCdfEOoEJ42S6/main/$filename" -O "$filename"
+              fi
+            fi
+          done < file_list.txt
+
+      - name: 提交新文件到你的仓库
+        run: |
           git config --global user.name "sync"
           git config --global user.email "sync@github.com"
-          git add .
-          git commit -m "自动同步原库更新" || true
-          git push --force origin main
+          git add *.manifest 2>/dev/null || true
+          git commit -m "新增更新文件" 2>/dev/null || true
+          git push origin main
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
