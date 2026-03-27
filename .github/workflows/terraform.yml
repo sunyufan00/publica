@@ -1,75 +1,30 @@
-# This workflow installs the latest version of Terraform CLI and configures the Terraform CLI configuration file
-# with an API token for Terraform Cloud (app.terraform.io). On pull request events, this workflow will run
-# `terraform init`, `terraform fmt`, and `terraform plan` (speculative plan via Terraform Cloud). On push events
-# to the "main" branch, `terraform apply` will be executed.
-#
-# Documentation for `hashicorp/setup-terraform` is located here: https://github.com/hashicorp/setup-terraform
-#
-# To use this workflow, you will need to complete the following setup steps.
-#
-# 1. Create a `main.tf` file in the root of this repository with the `remote` backend and one or more resources defined.
-#   Example `main.tf`:
-#     # The configuration for the `remote` backend.
-#     terraform {
-#       backend "remote" {
-#         # The name of your Terraform Cloud organization.
-#         organization = "example-organization"
-#
-#         # The name of the Terraform Cloud workspace to store Terraform state files in.
-#         workspaces {
-#           name = "example-workspace"
-#         }
-#       }
-#     }
-#
-#     # An example resource that does nothing.
-#     resource "null_resource" "example" {
-#       triggers = {
-#         value = "A example resource that does nothing!"
-#       }
-#     }
-#
-#
-# 2. Generate a Terraform Cloud user API token and store it as a GitHub secret (e.g. TF_API_TOKEN) on this repository.
-#   Documentation:
-#     - https://www.terraform.io/docs/cloud/users-teams-organizations/api-tokens.html
-#     - https://help.github.com/en/actions/configuring-and-managing-workflows/creating-and-storing-encrypted-secrets
-#
-# 3. Reference the GitHub secret in step using the `hashicorp/setup-terraform` GitHub Action.
-#   Example:
-#     - name: Setup Terraform
-#       uses: hashicorp/setup-terraform@v1
-#       with:
-#         cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
-
-name: 高频轻量同步原库
-# 触发规则：手动触发 + 每15分钟自动同步（适配原库30分钟级更新，可按需改）
+name: 超轻量实时同步（永不爆盘）
 on:
   workflow_dispatch:
   schedule:
-    - cron: '*/15 * * * *' 
+    - cron: '*/5 * * * *'  # 每5分钟自动同步一次！
 
 jobs:
   sync:
     runs-on: ubuntu-latest
-    env:
-      # 强制用Node24，解决之前的警告
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
-      - name: 拉取自己仓库的最新代码
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # 拉取完整历史，避免冲突
-          repository: sunyufan00/publica
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: 添加原库为上游仓库
+      - name: 仅同步最新文件（无历史，超小体积）
         run: |
-          git remote add upstream https://github.com/qwe213312/k25FCdfEOoEJ42S6.git
-          git fetch upstream main
-
-      - name: 合并原库更新（只更新增/修改，不删文件）
-        run: |
-          git merge --no-ff --no-edit upstream/main -X theirs
-          # 强制推送更新到你的仓库
-          git push origin main --force
+          # 克隆你自己的仓库（只最新版）
+          git clone --depth=1 https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/sunyufan00/publica.git myrepo
+          cd myrepo
+          
+          # 直接覆盖下载原库最新文件
+          curl -L https://github.com/qwe213312/k25FCdfEOoEJ42S6/archive/refs/heads/main.zip -o upstream.zip
+          unzip -o upstream.zip -d temp
+          cp -rf temp/k25FCdfEOoEJ42S6-main/* .
+          rm -rf temp upstream.zip
+          
+          # 提交并推送
+          git config --global user.name "sync"
+          git config --global user.email "sync@github.com"
+          git add .
+          git commit -m "自动同步原库更新" || true
+          git push --force origin main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
