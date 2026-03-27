@@ -1,38 +1,39 @@
-name: 云端API同步（永不爆盘）
+name: 仅增量同步新文件（永不爆盘/永不卡死）
 on:
   workflow_dispatch:
   schedule:
-    - cron: '*/10 * * * *'
+    - cron: '*/15 * * * *'
 
 jobs:
   sync:
     runs-on: ubuntu-latest
-    container: alpine:latest
     steps:
       - name: 安装依赖
+        run: sudo apt install -y curl jq
+
+      - name: 获取原库文件列表（仅路径，不占空间）
         run: |
-          apk add --no-cache curl jq git
-        
-      - name: 获取原库新文件列表
+          curl -s "https://api.github.com/repos/qwe213312/k25FCdfEOoEJ42S6/git/trees/main?recursive=1" | \
+          jq -r '.tree[].path' | grep manifest > /tmp/src_files
+
+      - name: 获取你仓库现有文件（仅路径）
         run: |
-          curl -s https://api.github.com/repos/qwe213312/k25FCdfEOoEJ42S6/git/trees/main?recursive=1 | jq -r '.tree[].path' > /tmp/all_files
-          
-      - name: 批量下载新文件（不写入Git，不占空间）
+          curl -s "https://api.github.com/repos/sunyufan00/publica/git/trees/main?recursive=1" | \
+          jq -r '.tree[].path' | grep manifest > /tmp/my_files 2>/dev/null || true
+
+      - name: 找出【只在原库有、你没有的新文件】
         run: |
-          mkdir -p /tmp/new_files
+          grep -Fxvf /tmp/my_files /tmp/src_files > /tmp/new_files
+          echo "发现新文件数量：$(wc -l < /tmp/new_files)"
+
+      - name: 每次只同步前 100 个新文件（永不卡死）
+        run: |
+          head -100 /tmp/new_files > /tmp/batch
           while read f; do
-            if [[ "$f" == *.manifest ]]; then
-              curl -s -o "/tmp/new_files/$f" "https://raw.githubusercontent.com/qwe213312/k25FCdfEOoEJ42S6/main/$f"
-            fi
-          done < /tmp/all_files
-          
-      - name: 直接通过API上传到你的仓库（永不checkout！）
-        run: |
-          cd /tmp/new_files
-          for file in *.manifest; do
-            content=$(base64 -w0 "$file")
-            curl -s -X PUT "https://api.github.com/repos/sunyufan00/publica/contents/$file" \
+            echo "同步: $f"
+            content=$(curl -s "https://raw.githubusercontent.com/qwe213312/k25FCdfEOoEJ42S6/main/$f" | base64 -w0)
+            curl -s -X PUT "https://api.github.com/repos/sunyufan00/publica/contents/$f" \
               -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-              -H "Accept: application/vnd.github.v3+json" \
-              -d "{\"message\":\"自动同步新增文件\",\"content\":\"$content\"}"
-          done
+              -d "{\"message\":\"add $f\",\"content\":\"$content\"}"
+            sleep 0.5
+          done < /tmp/batch
