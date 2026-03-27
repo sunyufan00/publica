@@ -1,4 +1,4 @@
-name: 仅增量同步新文件（永不爆盘/永不卡死）
+name: Ultra Light Sync
 on:
   workflow_dispatch:
   schedule:
@@ -8,32 +8,23 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - name: 安装依赖
-        run: sudo apt install -y curl jq
-
-      - name: 获取原库文件列表（仅路径，不占空间）
+      - name: Run
         run: |
-          curl -s "https://api.github.com/repos/qwe213312/k25FCdfEOoEJ42S6/git/trees/main?recursive=1" | \
-          jq -r '.tree[].path' | grep manifest > /tmp/src_files
+          # 1. 获取原库文件列表
+          curl -s https://api.github.com/repos/qwe213312/k25FCdfEOoEJ42S6/git/trees/main?recursive=1 | jq -r '.tree[].path' | grep manifest > /tmp/source
 
-      - name: 获取你仓库现有文件（仅路径）
-        run: |
-          curl -s "https://api.github.com/repos/sunyufan00/publica/git/trees/main?recursive=1" | \
-          jq -r '.tree[].path' | grep manifest > /tmp/my_files 2>/dev/null || true
+          # 2. 获取你现有文件
+          curl -s https://api.github.com/repos/sunyufan00/publica/git/trees/main?recursive=1 | jq -r '.tree[].path' | grep manifest > /tmp/target 2>/dev/null
 
-      - name: 找出【只在原库有、你没有的新文件】
-        run: |
-          grep -Fxvf /tmp/my_files /tmp/src_files > /tmp/new_files
-          echo "发现新文件数量：$(wc -l < /tmp/new_files)"
+          # 3. 找出你没有的新文件
+          grep -Fxvf /tmp/target /tmp/source | head -20 > /tmp/todo
 
-      - name: 每次只同步前 100 个新文件（永不卡死）
-        run: |
-          head -100 /tmp/new_files > /tmp/batch
-          while read f; do
-            echo "同步: $f"
-            content=$(curl -s "https://raw.githubusercontent.com/qwe213312/k25FCdfEOoEJ42S6/main/$f" | base64 -w0)
+          # 4. 逐个上传（极简，永不报错）
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            content=$(curl -s "https://raw.githubusercontent.com/qwe213312/k25FCdfEOoEJ42S6/main/$f" | base64 -w 0)
             curl -s -X PUT "https://api.github.com/repos/sunyufan00/publica/contents/$f" \
               -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-              -d "{\"message\":\"add $f\",\"content\":\"$content\"}"
-            sleep 0.5
-          done < /tmp/batch
+              -d '{"message":"add","content":"'"$content"'"}'
+            sleep 1
+          done < /tmp/todo
