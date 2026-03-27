@@ -1,40 +1,38 @@
-name: 仅同步新增文件（永不爆盘）
+name: 云端API同步（永不爆盘）
 on:
   workflow_dispatch:
   schedule:
-    - cron: '*/5 * * * *'
+    - cron: '*/10 * * * *'
 
 jobs:
   sync:
     runs-on: ubuntu-latest
+    container: alpine:latest
     steps:
-      - name: 检出你的仓库（仅最新，无历史）
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: 拉取原库文件列表（只拉列表，不拉文件！）
+      - name: 安装依赖
         run: |
-          curl -s https://api.github.com/repos/qwe213312/k25FCdfEOoEJ42S6/git/trees/main?recursive=1 | jq -r '.tree[].path' > file_list.txt
-
-      - name: 只下载【你仓库没有的新文件】
+          apk add --no-cache curl jq git
+        
+      - name: 获取原库新文件列表
         run: |
-          mkdir -p new_files
-          while read -r filename; do
-            if [[ "$filename" == *.manifest ]]; then
-              if [[ ! -f "$filename" ]]; then
-                echo "新增文件：$filename"
-                wget -q "https://raw.githubusercontent.com/qwe213312/k25FCdfEOoEJ42S6/main/$filename" -O "$filename"
-              fi
+          curl -s https://api.github.com/repos/qwe213312/k25FCdfEOoEJ42S6/git/trees/main?recursive=1 | jq -r '.tree[].path' > /tmp/all_files
+          
+      - name: 批量下载新文件（不写入Git，不占空间）
+        run: |
+          mkdir -p /tmp/new_files
+          while read f; do
+            if [[ "$f" == *.manifest ]]; then
+              curl -s -o "/tmp/new_files/$f" "https://raw.githubusercontent.com/qwe213312/k25FCdfEOoEJ42S6/main/$f"
             fi
-          done < file_list.txt
-
-      - name: 提交新文件到你的仓库
+          done < /tmp/all_files
+          
+      - name: 直接通过API上传到你的仓库（永不checkout！）
         run: |
-          git config --global user.name "sync"
-          git config --global user.email "sync@github.com"
-          git add *.manifest 2>/dev/null || true
-          git commit -m "新增更新文件" 2>/dev/null || true
-          git push origin main
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          cd /tmp/new_files
+          for file in *.manifest; do
+            content=$(base64 -w0 "$file")
+            curl -s -X PUT "https://api.github.com/repos/sunyufan00/publica/contents/$file" \
+              -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Accept: application/vnd.github.v3+json" \
+              -d "{\"message\":\"自动同步新增文件\",\"content\":\"$content\"}"
+          done
